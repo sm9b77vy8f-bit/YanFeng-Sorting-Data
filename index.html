@@ -1,0 +1,6663 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de Calidad — Producción</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Firebase (App + Firestore) — reemplaza el almacenamiento de Claude para que el dashboard
+     funcione como reporte en línea real, hospedado fuera de Claude. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  :root{
+    --bg: #10141b;
+    --panel: #171d27;
+    --panel-2: #1e2632;
+    --border: #2a3341;
+    --text: #e7ebf1;
+    --text-dim: #8996a8;
+    --text-faint: #5c6a7e;
+    --ok: #3fd17e;
+    --ok-dim: #1e3d2c;
+    --reject: #f0553f;
+    --reject-dim: #402320;
+    --warn: #f2b544;
+    --t1: #5aa9e6;
+    --t2: #f2b544;
+    --t3: #7b6fd6;
+    --radius: 10px;
+    --mono: 'JetBrains Mono', monospace;
+    --disp: 'Oswald', sans-serif;
+    --body: 'Inter', sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(90,169,230,0.06), transparent 40%),
+      radial-gradient(circle at 85% 10%, rgba(240,85,63,0.05), transparent 35%);
+  }
+
+  .wrap{ max-width: 1320px; margin: 0 auto; padding: 20px 20px 60px; }
+
+  /* ===== Header / Andon strip ===== */
+  header.top{
+    display:flex; align-items:center; justify-content:space-between;
+    gap: 16px; flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand .mark{
+    width:38px; height:38px; border-radius:8px;
+    background: linear-gradient(135deg, var(--t1), var(--t3));
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--disp); font-weight:700; font-size:16px; color:#0c0f14;
+    flex-shrink:0;
+  }
+  .brand h1{
+    font-family: var(--disp); font-weight:600; font-size: 21px;
+    margin:0; letter-spacing:0.3px;
+  }
+  .brand .sub{ font-size:12px; color:var(--text-dim); margin-top:2px; }
+
+  .andon{ display:flex; gap:10px; }
+  .andon .light{
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    min-width: 96px;
+    text-align:center;
+    position: relative;
+  }
+  .andon .light .dot{
+    width:9px; height:9px; border-radius:50%;
+    display:inline-block; margin-right:6px;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .andon .light .lbl{ font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:1px; font-family: var(--disp); }
+  .andon .light .val{ font-family: var(--disp); font-size:18px; font-weight:600; margin-top:2px; }
+
+  /* ===== Toolbar ===== */
+  .toolbar{
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;
+    margin-bottom: 18px;
+  }
+  .field{ display:flex; flex-direction:column; gap:5px; }
+  .field label{ font-size:10.5px; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-faint); font-family:var(--disp); }
+  .field input, .field select{
+    background: var(--panel-2);
+    border:1px solid var(--border);
+    color: var(--text);
+    padding:7px 9px;
+    border-radius:6px;
+    font-size:13px;
+    font-family: var(--body);
+    min-width: 130px;
+  }
+  .field input::placeholder{ color: var(--text-faint); }
+  .field input:focus, .field select:focus{ outline:1px solid var(--t1); }
+
+  .shift-toggle{ display:flex; gap:6px; }
+  .shift-chip{
+    border:1px solid var(--border); background:var(--panel-2); color:var(--text-dim);
+    padding:7px 12px; border-radius:6px; cursor:pointer; font-size:12.5px; font-family:var(--disp);
+    user-select:none;
+  }
+  .shift-chip.on1{ border-color:var(--t1); color:var(--t1); background: rgba(90,169,230,0.1);}
+  .shift-chip.on2{ border-color:var(--t2); color:var(--t2); background: rgba(242,181,68,0.1);}
+  .shift-chip.on3{ border-color:var(--t3); color:var(--t3); background: rgba(123,111,214,0.1);}
+
+  .spacer{ flex: 1; }
+  .btn{
+    font-family: var(--disp); font-size:13px; letter-spacing:0.3px;
+    border-radius:6px; border:1px solid var(--border); cursor:pointer;
+    padding:9px 16px; background: var(--panel-2); color:var(--text);
+    transition: filter .15s ease;
+  }
+  .btn:hover{ filter:brightness(1.2); }
+  .btn.primary{ background: linear-gradient(135deg, var(--t1), #3d84c4); color:#0c0f14; border:none; font-weight:600; }
+  .btn.ghost{ background:transparent; }
+  .btn.small{ padding:5px 10px; font-size:11.5px; }
+  .btn.danger{ color: var(--reject); border-color: var(--reject); background: transparent;}
+
+  /* ===== KPI cards ===== */
+  .kpis{ display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin-bottom:18px; }
+  .kpi{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius);
+    padding:16px 18px; position:relative; overflow:hidden;
+  }
+  .kpi .tag{ font-size:10.5px; text-transform:uppercase; letter-spacing:1px; color:var(--text-faint); font-family:var(--disp); }
+  .kpi .num{ font-family: var(--disp); font-size:34px; font-weight:600; margin-top:6px; }
+  .kpi .foot{ font-size:11.5px; color:var(--text-dim); margin-top:4px; }
+  .kpi.ok .num{ color: var(--ok); }
+  .kpi.reject .num{ color: var(--reject); }
+  .kpi.rate .num{ color: var(--warn); }
+  .kpi .bar-bg{ position:absolute; bottom:0; left:0; height:3px; width:100%; background: var(--border); }
+  .kpi .bar-fg{ position:absolute; bottom:0; left:0; height:3px; background: var(--warn); transition: width .4s ease; }
+
+  /* ===== Charts ===== */
+  .charts{ display:grid; grid-template-columns: 1.3fr 1fr 1fr; gap:14px; margin-bottom:18px; }
+  .panel{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius);
+    padding:16px;
+  }
+  .panel h3{
+    font-family: var(--disp); font-size:14px; font-weight:500; margin:0 0 12px 0;
+    color: var(--text-dim); text-transform:uppercase; letter-spacing:0.6px;
+    display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  }
+  .chart-box{ position:relative; height:230px; }
+  .chart-hint{ font-size:10.5px; color:var(--text-faint); text-align:center; margin-top:8px; }
+  .modo-filter-chip{
+    display:inline-flex; align-items:center; gap:6px; background: rgba(240,85,63,0.12);
+    color: var(--reject); border:1px solid var(--reject); border-radius:20px;
+    padding:3px 6px 3px 10px; font-size:10.5px; text-transform:none; letter-spacing:0; font-family:var(--body);
+  }
+  .modo-filter-chip button{
+    background:transparent; border:none; color:var(--reject); cursor:pointer; font-size:12px;
+    width:16px; height:16px; display:flex; align-items:center; justify-content:center; border-radius:50%;
+  }
+  .modo-filter-chip button:hover{ background: rgba(240,85,63,0.25); }
+  .empty-note{ color:var(--text-faint); font-size:12.5px; text-align:center; padding-top:80px; }
+
+  /* ===== Table ===== */
+  .table-panel{ background: var(--panel); border:1px solid var(--border); border-radius: var(--radius); overflow:hidden; }
+  .table-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); }
+  .table-head h3{ font-family: var(--disp); font-size:14px; font-weight:500; margin:0; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.6px; }
+  table{ width:100%; border-collapse: collapse; font-size:12.5px; }
+  thead th{
+    text-align:left; padding:9px 12px; color:var(--text-faint); font-weight:500;
+    font-family: var(--disp); font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px;
+    border-bottom:1px solid var(--border); white-space:nowrap;
+  }
+  tbody td{ padding:9px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  tbody tr:hover{ background: rgba(255,255,255,0.02); cursor:pointer; }
+  tbody tr:last-child td{ border-bottom:none; }
+  .mono{ font-family: var(--mono); font-size:12px; color: var(--text-dim); }
+  .badge-turno{
+    font-family: var(--disp); font-size:11px; padding:2px 8px; border-radius:20px; font-weight:600;
+    display:inline-block; cursor:pointer; border:1px solid transparent; transition: filter .15s ease;
+  }
+  .badge-turno:hover{ filter:brightness(1.3); }
+  .badge-turno.active{ box-shadow: 0 0 0 1.5px currentColor; }
+  .badge-turno.t1{ background: rgba(90,169,230,0.14); color:var(--t1); }
+  .badge-turno.t2{ background: rgba(242,181,68,0.14); color:var(--t2); }
+  .badge-turno.t3{ background: rgba(123,111,214,0.14); color:var(--t3); }
+  .num-ok{ color: var(--ok); font-family: var(--mono); }
+  .num-reject{ color: var(--reject); font-family: var(--mono); }
+  .rate-cell{ display:flex; align-items:center; gap:8px; }
+  .rate-track{ width:54px; height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
+  .rate-fill{ height:100%; background: var(--reject); }
+  .row-detail{ background: var(--panel-2); display:none; }
+  .row-detail.open{ display:table-row; }
+  .row-detail td{ padding:12px 16px; }
+  .detail-chip{
+    display:inline-flex; align-items:center; gap:6px; background: var(--bg);
+    border:1px solid var(--border); border-radius:20px; padding:4px 10px; margin:2px 4px 2px 0; font-size:11.5px;
+  }
+  .detail-chip .n{ color: var(--reject); font-family: var(--mono); font-weight:700; }
+  .empty-state{ padding: 50px 20px; text-align:center; color: var(--text-faint); }
+  .empty-state .big{ font-family: var(--disp); font-size:16px; color:var(--text-dim); margin-bottom:6px; }
+
+  /* ===== Modal ===== */
+  .overlay{
+    position:fixed; inset:0; background: rgba(6,8,12,0.7); backdrop-filter: blur(2px);
+    display:none; align-items:flex-start; justify-content:center; z-index:50; padding: 40px 16px; overflow-y:auto;
+  }
+  .overlay.open{ display:flex; }
+  .modal{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 640px; padding: 22px 24px 24px;
+  }
+  .modal h2{ font-family: var(--disp); font-size:19px; margin:0 0 4px 0; }
+  .modal .modal-sub{ color:var(--text-dim); font-size:12.5px; margin-bottom:18px; }
+  .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  .grid3{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; }
+  .modal .field input, .modal .field select{ width:100%; min-width:0; }
+  .modal .field{ margin-bottom:12px; }
+  .modal-shift{ display:flex; gap:8px; margin-bottom: 4px; }
+  .modal-shift .opt{
+    flex:1; text-align:center; padding:10px; border-radius:6px; border:1px solid var(--border);
+    cursor:pointer; font-family: var(--disp); font-size:13px; color:var(--text-dim); background: var(--panel-2);
+  }
+  .modal-shift .opt.sel1{ border-color:var(--t1); color:var(--t1); background:rgba(90,169,230,0.12); }
+  .modal-shift .opt.sel2{ border-color:var(--t2); color:var(--t2); background:rgba(242,181,68,0.12); }
+  .modal-shift .opt.sel3{ border-color:var(--t3); color:var(--t3); background:rgba(123,111,214,0.12); }
+
+  .section-title{
+    font-family: var(--disp); font-size:11.5px; text-transform:uppercase; letter-spacing:0.8px;
+    color:var(--text-faint); margin: 18px 0 8px; padding-top:14px; border-top:1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .fail-row{ display:grid; grid-template-columns: 1fr 90px 32px; gap:8px; margin-bottom:8px; align-items:center; }
+  .fail-row select, .fail-row input{ background: var(--panel-2); border:1px solid var(--border); color:var(--text); padding:7px 8px; border-radius:6px; font-size:12.5px; width:100%; }
+  .rm-row{ background:transparent; border:none; color:var(--text-faint); cursor:pointer; font-size:16px; }
+  .rm-row:hover{ color: var(--reject); }
+  .sum-check{ font-size:11.5px; margin-top:6px; padding:8px 10px; border-radius:6px; }
+  .sum-check.ok{ background: var(--ok-dim); color: var(--ok); }
+  .sum-check.bad{ background: var(--reject-dim); color: var(--reject); }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
+  .new-mode-input{ display:flex; gap:8px; margin-top:6px; }
+  .new-mode-input input{ flex:1; background: var(--panel-2); border:1px solid var(--border); color:var(--text); padding:7px 9px; border-radius:6px; font-size:12.5px; }
+
+  /* ===== Evidencia fotográfica (modal) ===== */
+  .img-slot{
+    border:1px dashed var(--border); border-radius: var(--radius); background: var(--panel-2);
+    min-height:112px; position:relative; overflow:hidden;
+  }
+  .hidden-file{ display:none; }
+  .slot-placeholder{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    height:112px; cursor:pointer; padding:8px; text-align:center;
+  }
+  .slot-placeholder:hover{ border-color:var(--t1); }
+  .slot-placeholder .icon{ font-size:20px; opacity:0.7; }
+  .slot-placeholder .lbl{ font-family:var(--disp); font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:var(--text-dim); }
+  .slot-placeholder .hint{ font-size:10px; color:var(--text-faint); }
+  .slot-preview{ position:relative; height:112px; }
+  .slot-preview img.preview{ width:100%; height:100%; object-fit:cover; display:block; }
+  .slot-preview .rm-img{
+    position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%;
+    background: rgba(16,20,27,0.85); border:1px solid var(--border); color:var(--text);
+    display:flex; align-items:center; justify-content:center; font-size:12px; cursor:pointer;
+  }
+  .slot-preview .rm-img:hover{ color: var(--reject); border-color: var(--reject); }
+  .slot-preview .fname{
+    position:absolute; bottom:0; left:0; right:0; background: rgba(16,20,27,0.78);
+    font-size:10px; color:var(--text-dim); padding:3px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* ===== Evidencia fotográfica (detalle de tabla) ===== */
+  .detail-imgs{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .detail-img-card{ background: var(--bg); border:1px solid var(--border); border-radius:8px; padding:6px; width:118px; }
+  .detail-img-card img{ width:100%; height:76px; object-fit:cover; border-radius:6px; cursor:zoom-in; display:block; }
+  .detail-img-card .cap{ font-family:var(--disp); font-size:10px; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-faint); margin-top:5px; text-align:center; }
+
+  .img-lightbox{
+    position:fixed; inset:0; background: rgba(8,10,14,0.92); display:none;
+    align-items:center; justify-content:center; z-index:999; padding:32px; cursor:zoom-out;
+  }
+  .img-lightbox.open{ display:flex; }
+  .img-lightbox img{ max-width:90vw; max-height:90vh; border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,0.55); }
+
+  /* ===== Confirmación de foto tomada ===== */
+  .img-confirm{
+    position:fixed; inset:0; background: rgba(8,10,14,0.94); display:none;
+    align-items:center; justify-content:center; z-index:1000; padding:20px;
+  }
+  .img-confirm.open{ display:flex; }
+  .img-confirm-box{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius);
+    padding:16px; max-width:520px; width:100%; text-align:center;
+  }
+  .img-confirm-label{
+    font-family: var(--disp); font-size:12px; text-transform:uppercase; letter-spacing:0.8px;
+    color:var(--text-dim); margin-bottom:10px;
+  }
+  .img-confirm-box img{
+    max-width:100%; max-height:60vh; border-radius:8px; display:block; margin:0 auto 16px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+  }
+  .img-confirm-actions{ display:flex; justify-content:center; gap:10px; flex-wrap:wrap; }
+
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background: #2a3341; border-radius:5px; }
+  ::-webkit-scrollbar-track{ background: transparent; }
+
+  .toast{
+    position:fixed; bottom:20px; right:20px; background: var(--panel); border:1px solid var(--border);
+    padding:12px 18px; border-radius:8px; font-size:13px; z-index:100; display:none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .toast.show{ display:block; }
+
+  @media (max-width: 980px){
+    .kpis{ grid-template-columns: 1fr 1fr; }
+    .charts{ grid-template-columns: 1fr; }
+    .grid2, .grid3{ grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="mark">QC</div>
+      <div>
+        <h1>Panel de Calidad</h1>
+        <div class="sub" id="rangeLabel">Cargando datos compartidos…</div>
+      </div>
+    </div>
+    <div class="andon" id="andonStrip"></div>
+  </header>
+
+  <div class="toolbar">
+    <div class="field">
+      <label>Desde</label>
+      <input type="date" id="fDesde">
+    </div>
+    <div class="field">
+      <label>Hasta</label>
+      <input type="date" id="fHasta">
+    </div>
+    <div class="field">
+      <label>Turno</label>
+      <div class="shift-toggle">
+        <div class="shift-chip" data-t="1" id="chip1">Turno 1</div>
+        <div class="shift-chip" data-t="2" id="chip2">Turno 2</div>
+        <div class="shift-chip" data-t="3" id="chip3">Turno 3</div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Línea</label>
+      <input list="dl-linea" id="fLinea" placeholder="Todas">
+      <datalist id="dl-linea"></datalist>
+    </div>
+    <div class="field">
+      <label>Producto</label>
+      <input list="dl-producto" id="fProducto" placeholder="Todos">
+      <datalist id="dl-producto"></datalist>
+    </div>
+    <div class="field">
+      <label>N° Parte</label>
+      <input list="dl-parte" id="fParte" placeholder="Todos">
+      <datalist id="dl-parte"></datalist>
+    </div>
+    <div class="field">
+      <label>Cliente</label>
+      <select id="fCliente"><option value="">Todos</option></select>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn ghost small" id="btnClearFilters">Limpiar filtros</button>
+    <button class="btn ghost small" id="btnExport">Exportar CSV</button>
+    <button class="btn ghost small" id="btnImportExcel" title="Los datos de Avanzar GTO ya se cargan automáticamente. Usa esto solo si necesitas reimportarlos.">Reimportar Excel (Avanzar GTO)</button>
+    <button class="btn primary" id="btnNew">+ Nuevo registro</button>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="tag">Total inspeccionado</div>
+      <div class="num" id="kpiInsp">0</div>
+      <div class="foot" id="kpiInspFoot">0 registros</div>
+    </div>
+    <div class="kpi ok">
+      <div class="tag">Piezas OK</div>
+      <div class="num" id="kpiOk">0</div>
+      <div class="foot" id="kpiOkFoot">0% del total</div>
+    </div>
+    <div class="kpi reject">
+      <div class="tag">Rechazadas</div>
+      <div class="num" id="kpiReject">0</div>
+      <div class="foot" id="kpiRejectFoot">0% del total</div>
+    </div>
+    <div class="kpi rate">
+      <div class="tag">% de rechazo</div>
+      <div class="num" id="kpiRate">0%</div>
+      <div class="bar-bg"><div class="bar-fg" id="kpiRateBar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="charts">
+    <div class="panel">
+      <h3>
+        <span>Piezas vs rechazos por modo de falla</span>
+        <span id="modoFilterChip" class="modo-filter-chip" style="display:none;">
+          <span id="modoFilterChipText"></span>
+          <button type="button" id="btnClearModoFilter" title="Quitar filtros cruzados">✕</button>
+        </span>
+      </h3>
+      <div class="chart-box"><canvas id="chartModos"></canvas></div>
+      <div class="chart-hint">Toca una barra para filtrar por ese modo de falla</div>
+    </div>
+    <div class="panel">
+      <h3>Piezas por turno</h3>
+      <div class="chart-box"><canvas id="chartTurno"></canvas></div>
+      <div class="chart-hint">Toca una barra para filtrar por ese turno</div>
+    </div>
+    <div class="panel">
+      <h3>Piezas por línea</h3>
+      <div class="chart-box"><canvas id="chartLinea"></canvas></div>
+      <div class="chart-hint">Toca una barra para filtrar por esa línea</div>
+    </div>
+  </div>
+
+  <div class="charts" style="grid-template-columns: 1fr 1fr;">
+    <div class="panel">
+      <h3>Acumulado mensual por modo de falla</h3>
+      <div class="chart-box"><canvas id="chartMonthly"></canvas></div>
+      <div class="chart-hint">Toca un segmento para filtrar por ese mes y modo de falla</div>
+    </div>
+    <div class="panel">
+      <h3>Acumulado semanal por modo de falla</h3>
+      <div class="chart-box"><canvas id="chartWeekly"></canvas></div>
+      <div class="chart-hint">Toca un segmento para filtrar por esa semana y modo de falla</div>
+    </div>
+  </div>
+
+  <div class="table-panel">
+    <div class="table-head">
+      <div>
+        <h3 style="margin-bottom:2px;">Registros por turno</h3>
+        <div style="font-size:10.5px;color:var(--text-faint);">Toca la etiqueta "Turno" de una fila para filtrar por ese turno</div>
+      </div>
+      <div class="sub" id="tableCount" style="font-size:12px;color:var(--text-faint);"></div>
+    </div>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th><th>Turno</th><th>Línea</th><th>Producto</th><th>N° Parte</th><th>Cliente</th>
+          <th>Total</th><th>Rech.</th><th>OK</th><th>% Rech.</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    </div>
+    <div class="empty-state" id="emptyState" style="display:none;">
+      <div class="big">Aún no hay registros</div>
+      <div>Captura el primer conteo de turno con “+ Nuevo registro”.</div>
+      <button class="btn ghost small" id="btnSeed" style="margin-top:14px;">Cargar registros de ejemplo</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2>Nuevo registro de turno</h2>
+    <div class="modal-sub">Captura el total acumulado del turno. Los datos se comparten con todo el equipo.</div>
+
+    <div class="grid2">
+      <div class="field"><label>Fecha</label><input type="date" id="mFecha"></div>
+      <div class="field">
+        <label>Turno</label>
+        <div class="modal-shift">
+          <div class="opt" data-t="1" id="mShift1">Turno 1</div>
+          <div class="opt" data-t="2" id="mShift2">Turno 2</div>
+          <div class="opt" data-t="3" id="mShift3">Turno 3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field"><label>Línea de producción</label><input id="mLinea" list="dl-linea" placeholder="Ej. Línea 1"></div>
+      <div class="field"><label>Producto</label><input id="mProducto" list="dl-producto" placeholder="Ej. Bracket A"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>Número de parte</label><input id="mParte" list="dl-parte" placeholder="Ej. PN-10234"></div>
+      <div class="field"><label>Cliente</label>
+        <select id="mCliente">
+          <option value="">Selecciona cliente…</option>
+          <option value="Avanzar">Avanzar</option>
+          <option value="Ford CC">Ford CC</option>
+          <option value="Toyota">Toyota</option>
+          <option value="BMW">BMW</option>
+          <option value="BMW Ncar">BMW Ncar</option>
+          <option value="GM">GM</option>
+          <option value="Moldeo">Moldeo</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field"><label>Piezas OK (inspeccionadas)</label><input type="number" min="0" id="mInsp" placeholder="0"></div>
+      <div class="field"><label>Total rechazadas (NOK)</label><input type="number" min="0" id="mRech" placeholder="0"></div>
+    </div>
+    <div class="modal-sub" style="margin-top:-6px;margin-bottom:14px;">El total inspeccionado se calcula automáticamente: OK + Rechazadas.</div>
+
+    <div class="section-title">
+      <span>Desglose de rechazos por modo de falla</span>
+      <button class="btn small ghost" id="btnAddFail">+ agregar modo</button>
+    </div>
+    <div id="failRows"></div>
+    <button class="btn small ghost" id="btnShowNewMode" style="margin-bottom:10px;">+ nuevo modo de falla al catálogo</button>
+    <div class="new-mode-input" id="newModeBox" style="display:none;">
+      <input id="newModeName" placeholder="Nombre del nuevo modo de falla">
+      <button class="btn small" id="btnConfirmNewMode">Agregar al catálogo</button>
+      <button class="btn small ghost" id="btnCancelNewMode">Cancelar</button>
+    </div>
+    <div class="sum-check" id="sumCheck"></div>
+
+    <div class="section-title">
+      <span>Evidencia fotográfica (opcional)</span>
+    </div>
+    <div class="grid3">
+      <div class="img-slot" id="imgSlot-falla">
+        <input type="file" accept="image/*" capture="environment" class="hidden-file" id="imgInput-falla">
+        <div class="slot-placeholder">
+          <div class="icon">📷</div>
+          <div class="lbl">Modo de falla</div>
+          <div class="hint">Toca para subir foto</div>
+        </div>
+        <div class="slot-preview" style="display:none;">
+          <img class="preview" alt="Foto modo de falla">
+          <div class="fname"></div>
+          <button type="button" class="rm-img" title="Quitar">✕</button>
+        </div>
+      </div>
+      <div class="img-slot" id="imgSlot-etiqueta">
+        <input type="file" accept="image/*" capture="environment" class="hidden-file" id="imgInput-etiqueta">
+        <div class="slot-placeholder">
+          <div class="icon">📷</div>
+          <div class="lbl">Etiqueta</div>
+          <div class="hint">Toca para subir foto</div>
+        </div>
+        <div class="slot-preview" style="display:none;">
+          <img class="preview" alt="Foto etiqueta">
+          <div class="fname"></div>
+          <button type="button" class="rm-img" title="Quitar">✕</button>
+        </div>
+      </div>
+      <div class="img-slot" id="imgSlot-etiquetaMaster">
+        <input type="file" accept="image/*" capture="environment" class="hidden-file" id="imgInput-etiquetaMaster">
+        <div class="slot-placeholder">
+          <div class="icon">📷</div>
+          <div class="lbl">Etiqueta Master</div>
+          <div class="hint">Toca para subir foto</div>
+        </div>
+        <div class="slot-preview" style="display:none;">
+          <img class="preview" alt="Foto etiqueta master">
+          <div class="fname"></div>
+          <button type="button" class="rm-img" title="Quitar">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" id="btnCancel">Cancelar</button>
+      <button class="btn primary" id="btnSave">Guardar registro</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox para ver fotos en grande -->
+<div class="img-lightbox" id="imgLightbox"><img id="imgLightboxImg" src="" alt="Foto ampliada"></div>
+
+<!-- Confirmación de foto recién tomada -->
+<div class="img-confirm" id="imgConfirm">
+  <div class="img-confirm-box">
+    <div class="img-confirm-label" id="imgConfirmLabel"></div>
+    <img id="imgConfirmPreview" src="" alt="Vista previa">
+    <div class="img-confirm-actions">
+      <button type="button" class="btn ghost" id="btnRetakePhoto">↺ Volver a tomar</button>
+      <button type="button" class="btn ghost" id="btnCancelPhoto">Cancelar</button>
+      <button type="button" class="btn primary" id="btnUsePhoto">✓ Usar esta foto</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   CONFIGURACIÓN DE FIREBASE
+   ------------------------------------------------------------
+   1) Crea un proyecto gratis en https://console.firebase.google.com
+   2) Activa "Firestore Database" (modo producción) en el menú lateral.
+   3) En Configuración del proyecto ⚙ > Tus apps > agrega una app Web (</>)
+      y copia aquí el objeto de configuración que te da Firebase.
+   4) En Firestore > Reglas, usa temporalmente algo como:
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /{document=**} { allow read, write: if true; }
+          }
+        }
+      (Esto deja el panel abierto a cualquiera con el link — adecuado
+      para una herramienta interna de planta. Si necesitas restringirlo
+      más, dímelo y ajustamos las reglas con autenticación.)
+   ============================================================ */
+const firebaseConfig = {
+  // Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyC2XgPHDjqBw-N-SXGKLTt3-cnW49PXFTg",
+  authDomain: "yanfeng-sorting.firebaseapp.com",
+  projectId: "yanfeng-sorting",
+  storageBucket: "yanfeng-sorting.firebasestorage.app",
+  messagingSenderId: "605866973755",
+  appId: "1:605866973755:web:4b211b1b037f9c56d15a1e"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// Colecciones/documentos usados en Firestore
+const COL_ENTRIES = 'qcEntries';           // 1 documento por registro de turno
+const COL_IMAGES  = 'qcImages';            // 1 documento por foto (falla/etiqueta/etiquetaMaster)
+const DOC_MODOS   = db.collection('qcConfig').doc('modos');        // catálogo de modos de falla
+const DOC_IMPORT  = db.collection('qcConfig').doc('importFlags');  // bandera de importación Avanzar GTO
+
+const DEFAULT_MODOS = ['Fuera de tolerancia dimensional','Rayones / cosmético','Golpes / abolladuras','Contaminación','Ensamble incorrecto','Falta de componente','Etiquetado incorrecto','Falla funcional','Otro'];
+const CLIENTES_FIJOS = ['Avanzar','Ford CC','Toyota','BMW','BMW Ncar','GM','Moldeo'];
+const IMPORT_AVANZAR_GTO_ENTRIES = [
+ {
+  "fecha": "2026-01-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   },
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 23,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 23
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-14",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 24,
+  "rechazos": [
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 24
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y0306010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 15,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 15
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y0306010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 113,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 25
+   },
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 88
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 14,
+  "rechazos": [
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 14
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0493530-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 42,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 42
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y0306012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 91,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 91
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 10,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 6
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-01-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DEFORMACIÓN",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 120,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 120
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 16,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 16
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y0306012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y0306012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 16,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 16
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 44,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 44
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0493530-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 50,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 50
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 90,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 90
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 38,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 38
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 61,
+  "rechazos": [
+   {
+    "modo": "FALTA DE CLIP",
+    "cantidad": 61
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 38,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 38
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 163,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 163
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 18,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 5
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 13
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 18,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 18
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-02-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597011-VAT9",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 1
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 19
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 2
+   },
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 119,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 119
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597009-VAT9",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 22,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 22
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 54,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 54
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 54,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 54
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 22,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 22
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 44,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 20
+   },
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 24
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 7,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 7
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 20
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 6,
+  "rechazos": [
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 6
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 60,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 60
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "FALTA DE MATERIAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 7,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 7
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 52,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 52
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 300,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 300
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 201,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   },
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 200
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 176,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 176
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 88,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 88
+   }
+  ]
+ },
+ {
+  "fecha": "2026-03-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 7,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 7
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-02",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-02",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 30,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 13
+   },
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   },
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 16
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 23,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 18
+   },
+   {
+    "modo": "BRILLO",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 52,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 52
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 38,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 38
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 50,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 50
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 18,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 18
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 47,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 47
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-15",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597014-V1T8",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 8,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 8
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 33,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 9
+   },
+   {
+    "modo": "BURBUJA",
+    "cantidad": 24
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 162,
+  "rechazos": [
+   {
+    "modo": "LINEA DE UNIÓN",
+    "cantidad": 162
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 13,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 13
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR LH",
+  "parte": "Y0493531-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0788868-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 17,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 17
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR LH",
+  "parte": "Y0788869-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 11,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 11
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 16,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 16
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-04-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWERR BOARD FRT RH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 20
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "ABULTAMIENTO",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 6,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 6
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 13,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 13
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 160,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 160
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 265,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 260
+   },
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 6,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 6
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 45,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 45
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 564,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 564
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 598,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 598
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 72,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 72
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 260,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 260
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 120,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 120
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 312,
+  "rechazos": [
+   {
+    "modo": "ESTRÉS",
+    "cantidad": 312
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 461,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 140
+   },
+   {
+    "modo": "RAFAGA",
+    "cantidad": 320
+   },
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-14",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 9,
+  "rechazos": [
+   {
+    "modo": "VENTANA TAPADA",
+    "cantidad": 9
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-15",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 50,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 50
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 125,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 125
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 520,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 520
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 36,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 36
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 44,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 44
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 42,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 42
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 392,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 392
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 242,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 92
+   },
+   {
+    "modo": "RAFAGA",
+    "cantidad": 150
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 158,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 58
+   },
+   {
+    "modo": "RAFAGA",
+    "cantidad": 100
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597012-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 8,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 8
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   },
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 150,
+  "rechazos": [
+   {
+    "modo": "BRILLO",
+    "cantidad": 150
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 340,
+  "rechazos": [
+   {
+    "modo": "BRILLO",
+    "cantidad": 340
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 120,
+  "rechazos": [
+   {
+    "modo": "DAÑO EN SUSTRATO",
+    "cantidad": 120
+   }
+  ]
+ },
+ {
+  "fecha": "2026-05-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 130,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 130
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 9,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 9
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 64,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 64
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 55,
+  "rechazos": [
+   {
+    "modo": "BRILLO",
+    "cantidad": 55
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST RR LH",
+  "parte": "Y0466756-A2Y8",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-15",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 45,
+  "rechazos": [
+   {
+    "modo": "LINEA DE UNIÓN",
+    "cantidad": 45
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-15",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 34,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 34
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   },
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 35,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 35
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 156,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 156
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 52,
+  "rechazos": [
+   {
+    "modo": "ETIQUETA NO LEGIBLE",
+    "cantidad": 52
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 208,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 208
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 468,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 468
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 261,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 261
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-19",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 210,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 210
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 190,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 190
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 156,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 156
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 340,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 340
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 523,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 523
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 256,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 256
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 605,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 605
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "FALTA DE PIN",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 260,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 260
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-24",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 223,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 156
+   },
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 66
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-25",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 156,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 156
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 100,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 100
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-26",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 174,
+  "rechazos": [
+   {
+    "modo": "ETIQUETA NO LEGIBLE",
+    "cantidad": 172
+   },
+   {
+    "modo": "RAFAGA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 41,
+  "rechazos": [
+   {
+    "modo": "BRILLO",
+    "cantidad": 40
+   },
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 157,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 156
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 109,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 104
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 123,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 123
+   }
+  ]
+ },
+ {
+  "fecha": "2026-06-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 180,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 180
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 238,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 238
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 180,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 180
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 158,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 156
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-01",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-02",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "ETIQUETA NO LEGIBLE",
+    "cantidad": 1
+   },
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-02",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597013-V1T8",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 90,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 90
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-02",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597014-V1T8",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 119,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 119
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 182,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 182
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MIDBOARD LH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "MATERIAL MEZCLADO",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BRILLO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 23,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 22
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 10,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 10
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-08",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT RH",
+  "parte": "Y1597014-V1T7",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 5,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 5
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 21,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 21
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-09",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 80,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 80
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-16",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 0,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 0
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-20",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 20
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-21",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-22",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD RH",
+  "parte": "S10005700-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-23",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 181,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN",
+    "cantidad": 1
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 180
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 89,
+  "rechazos": [
+   {
+    "modo": "LINEA DE UNIÓN",
+    "cantidad": 80
+   },
+   {
+    "modo": "REBABA",
+    "cantidad": 9
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR LH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 159,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 150
+   },
+   {
+    "modo": "FALTA DE PIN",
+    "cantidad": 9
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-27",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 6,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 6
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-28",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 220,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 220
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 130,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 130
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MID BOARD LH",
+  "parte": "S10005822-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "ETIQUETA NO LEGIBLE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-29",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 100,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 100
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-30",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 260,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 260
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-31",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 6,
+  "rechazos": [
+   {
+    "modo": "BURBUJA",
+    "cantidad": 6
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-31",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-07-31",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597011-VAT9",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 42,
+  "rechazos": [
+   {
+    "modo": "TONALIDAD DIFERENTE",
+    "cantidad": 42
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   },
+   {
+    "modo": "CONTAMINACIÓN CON STICKER",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-03",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0493530-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 15,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON LAPIZ DE CERA",
+    "cantidad": 15
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-04",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 60,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 60
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-05",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 4
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON STICKER",
+    "cantidad": 1
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON STICKER",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 20
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-06",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 21,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 20
+   },
+   {
+    "modo": "CONTAMINACIÓN CON STICKER",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "TIRO CORTO",
+    "cantidad": 1
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-07",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 60,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 60
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264810-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 20,
+  "rechazos": [
+   {
+    "modo": "MARCAS DE BOTADOR",
+    "cantidad": 20
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-10",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0493530-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT LH",
+  "parte": "S10005837-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "GOLPE",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT LH",
+  "parte": "Y0264502-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 43,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 40
+   },
+   {
+    "modo": "CONTAMINACIÓN CON LAPIZ DE CERA",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON LAPIZ DE CERA",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-11",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER RR RH",
+  "parte": "Y0493530-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON LAPIZ DE CERA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT RH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DEFORMACIÓN POR CONTENEDOR",
+    "cantidad": 2
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-12",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON STICKER",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400943-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 3,
+  "rechazos": [
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 3
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-13",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 52,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 52
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-14",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD FRT RH",
+  "parte": "S10005695-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 23,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 23
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET FRT LH",
+  "parte": "Y0400944-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "DEFORMACIÓN POR CONTENEDOR",
+    "cantidad": 1
+   },
+   {
+    "modo": "DAÑO POR CONTENEDOR",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 2,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN DE OXIDO",
+    "cantidad": 1
+   },
+   {
+    "modo": "DELAMINADO",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-17",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "UPPER FRT RH",
+  "parte": "S10005717-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "SIN ETIQUETA INDIVIDUAL",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR RH",
+  "parte": "Y0264795-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 550,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 550
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "LOWER BOARD RR LH",
+  "parte": "Y0264809-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 40,
+  "rechazos": [
+   {
+    "modo": "RAFAGA",
+    "cantidad": 40
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "ARM REST FRT LH",
+  "parte": "Y1597010-E2P1",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 1,
+  "rechazos": [
+   {
+    "modo": "REBABA",
+    "cantidad": 1
+   }
+  ]
+ },
+ {
+  "fecha": "2026-08-18",
+  "turno": 1,
+  "linea": "Avanzar GTO",
+  "producto": "MAP POCKET RR RH",
+  "parte": "Y0264796-202B",
+  "cliente": "Avanzar GTO",
+  "inspeccionadas": 0,
+  "rechazadas": 4,
+  "rechazos": [
+   {
+    "modo": "CONTAMINACIÓN CON LAPIZ DE CERA",
+    "cantidad": 3
+   },
+   {
+    "modo": "MATERIAL MAL IDENTIFICADO",
+    "cantidad": 1
+   }
+  ]
+ }
+];
+const IMPORT_AVANZAR_GTO_MODOS = [
+ "BURBUJA",
+ "MATERIAL MAL IDENTIFICADO",
+ "SIN ETIQUETA INDIVIDUAL",
+ "DAÑO EN SUSTRATO",
+ "REBABA",
+ "MATERIAL MEZCLADO",
+ "TIRO CORTO",
+ "ESTRÉS",
+ "MARCAS DE BOTADOR",
+ "DELAMINADO",
+ "CONTAMINACIÓN",
+ "RAFAGA",
+ "DEFORMACIÓN",
+ "FALTA DE CLIP",
+ "FALTA DE MATERIAL",
+ "BRILLO",
+ "LINEA DE UNIÓN",
+ "ABULTAMIENTO",
+ "VENTANA TAPADA",
+ "DAÑO POR CONTENEDOR",
+ "GOLPE",
+ "ETIQUETA NO LEGIBLE",
+ "FALTA DE PIN",
+ "TONALIDAD DIFERENTE",
+ "CONTAMINACIÓN CON LAPIZ DE CERA",
+ "CONTAMINACIÓN CON STICKER",
+ "DEFORMACIÓN POR CONTENEDOR",
+ "CONTAMINACIÓN DE OXIDO"
+];
+
+
+let entries = [];
+let modos = [...DEFAULT_MODOS];
+let filters = { desde:'', hasta:'', turnos: new Set(), linea:'', producto:'', parte:'', cliente:'', modo:'' };
+let chartModos, chartTurno, chartLinea, chartMonthly, chartWeekly;
+let modalFailRows = []; // {modo, cantidad}
+let modalShift = null;
+
+/* ===== Evidencia fotográfica ===== */
+const IMG_KEYS = ['falla','etiqueta','etiquetaMaster'];
+const IMG_LABELS = { falla:'Modo de falla', etiqueta:'Etiqueta', etiquetaMaster:'Etiqueta Master' };
+let modalImages = { falla:null, etiqueta:null, etiquetaMaster:null }; // dataURL comprimido o null
+const detailImgCache = {}; // cache en memoria de imágenes ya cargadas: `${id}:${key}` -> dataURL
+
+function compressImage(file, maxDim = 1000, quality = 0.72){
+  return new Promise((resolve, reject)=>{
+    if(!file.type || !file.type.startsWith('image/')){ reject(new Error('No es una imagen')); return; }
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('No se pudo leer el archivo'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('No se pudo decodificar la imagen'));
+      img.onload = ()=>{
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim){
+          if(width >= height){ height = Math.round(height * (maxDim / width)); width = maxDim; }
+          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function bindImgSlots(){
+  IMG_KEYS.forEach(key=>{
+    const slot = document.getElementById('imgSlot-'+key);
+    const input = document.getElementById('imgInput-'+key);
+    const placeholder = slot.querySelector('.slot-placeholder');
+    const preview = slot.querySelector('.slot-preview');
+    const img = preview.querySelector('img.preview');
+    const fname = preview.querySelector('.fname');
+    const rmBtn = preview.querySelector('.rm-img');
+
+    placeholder.addEventListener('click', ()=> input.click());
+    preview.addEventListener('click', (ev)=>{
+      if(ev.target.closest('.rm-img')) return;
+      if(modalImages[key]) openLightbox(modalImages[key]);
+    });
+    input.addEventListener('change', async ()=>{
+      const file = input.files[0];
+      if(!file) return;
+      try{
+        const dataUrl = await compressImage(file);
+        openPhotoConfirm(key, dataUrl, file.name);
+      }catch(err){
+        showToast('No se pudo cargar la foto de ' + IMG_LABELS[key].toLowerCase());
+      }
+      input.value = '';
+    });
+    rmBtn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      modalImages[key] = null;
+      input.value = '';
+      preview.style.display = 'none';
+      placeholder.style.display = 'flex';
+    });
+  });
+}
+
+function applyImgToSlot(key, dataUrl, fileName){
+  const slot = document.getElementById('imgSlot-'+key);
+  const placeholder = slot.querySelector('.slot-placeholder');
+  const preview = slot.querySelector('.slot-preview');
+  const img = preview.querySelector('img.preview');
+  const fname = preview.querySelector('.fname');
+  modalImages[key] = dataUrl;
+  img.src = dataUrl;
+  fname.textContent = fileName || '';
+  placeholder.style.display = 'none';
+  preview.style.display = 'block';
+}
+
+/* ===== Confirmación de foto tomada (vista ampliada antes de aceptar) ===== */
+let pendingPhoto = null; // { key, dataUrl, fileName }
+function openPhotoConfirm(key, dataUrl, fileName){
+  pendingPhoto = { key, dataUrl, fileName };
+  document.getElementById('imgConfirmLabel').textContent = IMG_LABELS[key];
+  document.getElementById('imgConfirmPreview').src = dataUrl;
+  document.getElementById('imgConfirm').classList.add('open');
+}
+function closePhotoConfirm(){
+  document.getElementById('imgConfirm').classList.remove('open');
+  pendingPhoto = null;
+}
+document.getElementById('btnUsePhoto').addEventListener('click', ()=>{
+  if(!pendingPhoto) return;
+  applyImgToSlot(pendingPhoto.key, pendingPhoto.dataUrl, pendingPhoto.fileName);
+  closePhotoConfirm();
+});
+document.getElementById('btnCancelPhoto').addEventListener('click', closePhotoConfirm);
+document.getElementById('btnRetakePhoto').addEventListener('click', ()=>{
+  const key = pendingPhoto ? pendingPhoto.key : null;
+  closePhotoConfirm();
+  if(key) document.getElementById('imgInput-'+key).click();
+});
+
+function resetImgSlots(){
+  IMG_KEYS.forEach(key=>{
+    modalImages[key] = null;
+    const slot = document.getElementById('imgSlot-'+key);
+    slot.querySelector('input[type=file]').value = '';
+    slot.querySelector('.slot-placeholder').style.display = 'flex';
+    slot.querySelector('.slot-preview').style.display = 'none';
+  });
+}
+
+function openLightbox(src){
+  document.getElementById('imgLightboxImg').src = src;
+  document.getElementById('imgLightbox').classList.add('open');
+}
+
+async function loadDetailImages(id){
+  const container = document.getElementById('detailImgs-'+id);
+  if(!container || container.dataset.loaded === '1') return;
+  const entry = entries.find(e=>e.id === id);
+  const keys = entry && entry.imagenes ? IMG_KEYS.filter(k=>entry.imagenes[k]) : [];
+  if(!keys.length){ return; }
+  container.innerHTML = '<div style="color:var(--text-faint);font-size:11px;">Cargando fotos…</div>';
+  const cards = [];
+  for(const key of keys){
+    const cacheKey = id + ':' + key;
+    try{
+      let dataUrl = detailImgCache[cacheKey];
+      if(!dataUrl){
+        const doc = await db.collection(COL_IMAGES).doc(`${id}_${key}`).get();
+        dataUrl = (doc.exists && doc.data().dataUrl) ? doc.data().dataUrl : null;
+        if(dataUrl) detailImgCache[cacheKey] = dataUrl;
+      }
+      if(dataUrl){
+        cards.push(`<div class="detail-img-card"><img class="detail-thumb" src="${dataUrl}" data-full="${dataUrl}" alt="${escapeHtml(IMG_LABELS[key])}"><div class="cap">${escapeHtml(IMG_LABELS[key])}</div></div>`);
+      }
+    }catch(e){ /* foto no disponible */ }
+  }
+  container.innerHTML = cards.join('') || '<div style="color:var(--text-faint);font-size:11px;">No se pudieron cargar las fotos</div>';
+  container.dataset.loaded = '1';
+  container.querySelectorAll('.detail-thumb').forEach(img=>{
+    img.addEventListener('click', (ev)=>{ ev.stopPropagation(); openLightbox(img.dataset.full); });
+  });
+}
+
+function uid(){ return 'e_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8); }
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2600);
+}
+
+async function importAvanzarGTOData(){
+  let added = 0;
+  IMPORT_AVANZAR_GTO_MODOS.forEach(m=>{
+    if(!modos.includes(m)){ modos.push(m); added++; }
+  });
+  if(added) await saveModos();
+
+  // Escritura por lotes: los 301 registros caben en un solo batch de Firestore (límite: 500)
+  const batch = db.batch();
+  const withIds = IMPORT_AVANZAR_GTO_ENTRIES.map(e => ({ ...e, id: uid() }));
+  withIds.forEach(e=>{
+    batch.set(db.collection(COL_ENTRIES).doc(e.id), e);
+  });
+  await batch.commit();
+  await DOC_IMPORT.set({ avanzarGtoImported: true }, { merge:true });
+  return withIds.length;
+}
+
+let unsubscribeEntries = null;
+function subscribeEntries(){
+  if(unsubscribeEntries) unsubscribeEntries();
+  unsubscribeEntries = db.collection(COL_ENTRIES).onSnapshot(snapshot=>{
+    entries = snapshot.docs.map(d=>({ id: d.id, ...d.data() }));
+    document.getElementById('rangeLabel').textContent = entries.length
+      ? `${entries.length} registros compartidos por el equipo`
+      : 'Sin registros todavía — captura el primer turno';
+    populateDatalists();
+    applyFiltersAndRender();
+  }, err=>{
+    console.error('Error de Firestore (entries):', err);
+    showToast('No se pudo conectar con la base de datos en línea');
+  });
+}
+
+async function loadData(){
+  try{
+    const modosDoc = await DOC_MODOS.get();
+    modos = (modosDoc.exists && modosDoc.data().list) ? modosDoc.data().list : [...DEFAULT_MODOS];
+  }catch(e){ modos = [...DEFAULT_MODOS]; console.error('Error cargando modos:', e); }
+
+  // Cargar automáticamente los datos fijos de Avanzar GTO (una sola vez, sin necesidad de dar clic)
+  let alreadyImported = false;
+  try{
+    const flagDoc = await DOC_IMPORT.get();
+    alreadyImported = !!(flagDoc.exists && flagDoc.data().avanzarGtoImported === true);
+  }catch(e){ alreadyImported = false; }
+  if(!alreadyImported){
+    try{ await importAvanzarGTOData(); }catch(e){ console.error('Error importando Avanzar GTO:', e); }
+  }
+
+  subscribeEntries(); // deja la tabla, KPIs y gráficas escuchando cambios en tiempo real
+}
+
+async function saveModos(){
+  try{
+    await DOC_MODOS.set({ list: modos });
+  }catch(e){ console.error('No se pudo guardar el catálogo de modos:', e); }
+}
+
+function populateDatalists(){
+  const distinct = (key) => [...new Set(entries.map(e=>e[key]).filter(Boolean))];
+  const fill = (id, vals) => {
+    const dl = document.getElementById(id);
+    dl.innerHTML = vals.map(v=>`<option value="${escapeHtml(v)}">`).join('');
+  };
+  fill('dl-linea', distinct('linea'));
+  fill('dl-producto', distinct('producto'));
+  fill('dl-parte', distinct('parte'));
+  populateClienteFilter(distinct('cliente'));
+}
+
+function populateClienteFilter(distinctClientes){
+  const sel = document.getElementById('fCliente');
+  const current = sel.value;
+  const otros = distinctClientes.filter(c => !CLIENTES_FIJOS.includes(c));
+  let html = '<option value="">Todos</option>' + CLIENTES_FIJOS.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  if(otros.length){
+    html += `<optgroup label="Otros (históricos)">${otros.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</optgroup>`;
+  }
+  sel.innerHTML = html;
+  sel.value = current || '';
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function getFiltered(){
+  return entries.filter(e=>{
+    if(filters.desde && e.fecha < filters.desde) return false;
+    if(filters.hasta && e.fecha > filters.hasta) return false;
+    if(filters.turnos.size && !filters.turnos.has(String(e.turno))) return false;
+    if(filters.linea && (e.linea||'').toLowerCase() !== filters.linea.toLowerCase()) return false;
+    if(filters.producto && (e.producto||'').toLowerCase() !== filters.producto.toLowerCase()) return false;
+    if(filters.parte && (e.parte||'').toLowerCase() !== filters.parte.toLowerCase()) return false;
+    if(filters.cliente && (e.cliente||'').toLowerCase() !== filters.cliente.toLowerCase()) return false;
+    if(filters.modo && !(e.rechazos||[]).some(r=>r.modo === filters.modo && Number(r.cantidad)>0)) return false;
+    return true;
+  });
+}
+
+function applyFiltersAndRender(){
+  const f = getFiltered();
+  renderKPIs(f);
+  renderAndon();
+  renderCharts(f);
+  renderTable(f);
+}
+
+function renderAndon(){
+  const strip = document.getElementById('andonStrip');
+  const today = todayStr();
+  const byShift = {1:[],2:[],3:[]};
+  entries.filter(e=>e.fecha===today).forEach(e=> byShift[e.turno] && byShift[e.turno].push(e));
+  strip.innerHTML = [1,2,3].map(t=>{
+    const list = byShift[t];
+    const ok = list.reduce((a,e)=>a+Number(e.inspeccionadas||0),0);
+    const rej = list.reduce((a,e)=>a+Number(e.rechazadas||0),0);
+    const total = ok + rej;
+    const rate = total ? (rej/total*100) : null;
+    let statusColor = 'var(--text-faint)';
+    if(rate !== null){
+      statusColor = rate < 2 ? 'var(--ok)' : (rate < 5 ? 'var(--warn)' : 'var(--reject)');
+    }
+    return `<div class="light">
+      <div class="lbl">Turno ${t}</div>
+      <div class="val"><span class="dot" style="background:${statusColor};color:${statusColor}"></span>${rate===null?'—':rate.toFixed(1)+'%'}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderKPIs(f){
+  const ok = f.reduce((a,e)=>a+Number(e.inspeccionadas||0),0);
+  const rej = f.reduce((a,e)=>a+Number(e.rechazadas||0),0);
+  const total = ok + rej;
+  const rate = total ? (rej/total*100) : 0;
+  const sinInsp = f.filter(e=>!Number(e.inspeccionadas)).length;
+  document.getElementById('kpiInsp').textContent = total.toLocaleString();
+  document.getElementById('kpiInspFoot').textContent = sinInsp
+    ? `${f.length} registros (${sinInsp} sin dato de OK)`
+    : `${f.length} registro${f.length===1?'':'s'}`;
+  document.getElementById('kpiOk').textContent = ok.toLocaleString();
+  document.getElementById('kpiOkFoot').textContent = total ? `${(ok/total*100).toFixed(1)}% del total` : '—';
+  document.getElementById('kpiReject').textContent = rej.toLocaleString();
+  document.getElementById('kpiRejectFoot').textContent = total ? `${rate.toFixed(1)}% del total` : '—';
+  document.getElementById('kpiRate').textContent = total ? rate.toFixed(1)+'%' : 'N/D';
+  document.getElementById('kpiRateBar').style.width = Math.min(rate*4,100)+'%';
+}
+
+function aggregate(f, keyFn){
+  const map = {};
+  f.forEach(e=>{
+    const k = keyFn(e);
+    if(!map[k]) map[k] = {insp:0, rej:0};
+    map[k].insp += Number(e.inspeccionadas||0);
+    map[k].rej += Number(e.rechazadas||0);
+  });
+  return map;
+}
+
+// Devuelve solo los renglones de desglose que corresponden al modo de falla activo
+// (si no hay filtro de modo activo, devuelve el desglose completo tal cual).
+function modoFilteredRechazos(e){
+  const list = (e.rechazos||[]).filter(r=>Number(r.cantidad)>0);
+  if(!filters.modo) return list;
+  return list.filter(r => r.modo === filters.modo);
+}
+
+const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const MODE_PALETTE = ['#f0553f','#f2b544','#5aa9e6','#7b6fd6','#3fd17e','#e879a8','#4dd0c4','#c98a4b','#9b59d6','#6ab04c','#8996a8'];
+
+function monthKeyOf(fecha){
+  const key = fecha.slice(0,7); // YYYY-MM
+  const label = `${MONTHS_ES[parseInt(fecha.slice(5,7),10)-1]} ${fecha.slice(2,4)}`;
+  return { key, label };
+}
+function isoWeekOf(fecha){
+  const d = new Date(fecha+'T00:00:00');
+  const target = new Date(d.valueOf());
+  const dayNr = (d.getDay()+6)%7; // Monday=0..Sunday=6
+  target.setDate(target.getDate() - dayNr + 3); // nearest Thursday
+  const firstThursday = new Date(target.getFullYear(),0,4);
+  const diff = target - firstThursday;
+  const week = 1 + Math.round(diff/(7*24*3600*1000));
+  const key = `${target.getFullYear()}-S${String(week).padStart(2,'0')}`;
+  const label = `S${week}`;
+  return { key, label };
+}
+
+function topModesWithOthers(f, limit){
+  const totals = {};
+  f.forEach(e=> modoFilteredRechazos(e).forEach(r=>{
+    totals[r.modo] = (totals[r.modo]||0) + Number(r.cantidad||0);
+  }));
+  return Object.entries(totals).sort((a,b)=>b[1]-a[1]).slice(0,limit).map(x=>x[0]);
+}
+
+function buildTimeModeChart(f, keyFn, limit){
+  const topModes = topModesWithOthers(f, limit);
+  const periodLabels = {};
+  const matrix = {};
+  f.forEach(e=>{
+    const { key, label } = keyFn(e.fecha);
+    if(!periodLabels[key]) periodLabels[key] = label;
+    if(!matrix[key]) matrix[key] = {};
+    modoFilteredRechazos(e).forEach(r=>{
+      const mode = topModes.includes(r.modo) ? r.modo : 'Otros';
+      matrix[key][mode] = (matrix[key][mode]||0) + Number(r.cantidad||0);
+    });
+  });
+  const periodKeys = Object.keys(periodLabels).sort();
+  const modes = [...topModes, 'Otros'];
+  const datasets = modes.map((m,i)=>({
+    label: m,
+    data: periodKeys.map(k => (matrix[k] && matrix[k][m]) || 0),
+    backgroundColor: MODE_PALETTE[i % MODE_PALETTE.length],
+    stack: 's',
+    borderRadius: 3
+  })).filter(ds => ds.data.some(v=>v>0));
+  return { labels: periodKeys.map(k=>periodLabels[k]), datasets, hasData: periodKeys.length>0 && datasets.length>0, periodKeys };
+}
+
+function monthRangeOf(key){ // key = 'YYYY-MM'
+  const [y,m] = key.split('-').map(Number);
+  const pad = n => String(n).padStart(2,'0');
+  const lastDay = new Date(y, m, 0).getDate();
+  return { desde: `${y}-${pad(m)}-01`, hasta: `${y}-${pad(m)}-${pad(lastDay)}` };
+}
+
+function weekRangeOf(key){ // key = 'YYYY-Sww' (semana ISO)
+  const [yStr, wStr] = key.split('-S');
+  const year = Number(yStr), week = Number(wStr);
+  const jan4 = new Date(year,0,4);
+  const jan4Day = (jan4.getDay()+6)%7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setDate(jan4.getDate() - jan4Day);
+  const monday = new Date(week1Monday);
+  monday.setDate(week1Monday.getDate() + (week-1)*7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate()+6);
+  const pad = n => String(n).padStart(2,'0');
+  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  return { desde: fmt(monday), hasta: fmt(sunday) };
+}
+
+function toggleChartEmpty(canvasId, hasData){
+  const canvas = document.getElementById(canvasId);
+  const box = canvas.parentElement;
+  let note = box.querySelector('.empty-note');
+  if(!hasData){
+    if(!note){ note = document.createElement('div'); note.className='empty-note'; note.textContent='Sin datos para este filtro'; box.appendChild(note); }
+    canvas.style.display='none';
+  } else {
+    if(note) note.remove();
+    canvas.style.display='block';
+  }
+}
+
+function renderCharts(f){
+  if(typeof Chart === 'undefined'){
+    document.querySelectorAll('.chart-box').forEach(box=>{
+      box.innerHTML = '<div class="empty-note">No se pudo cargar la librería de gráficas (Chart.js). Revisa tu conexión y recarga la página.</div>';
+    });
+    return;
+  }
+  // Modos de falla: piezas OK vs rechazos, por modo de falla
+  const modoTotals = {};
+  f.forEach(e=>{
+    const modosEnEntry = new Set();
+    modoFilteredRechazos(e).forEach(r=>{
+      if(!modoTotals[r.modo]) modoTotals[r.modo] = { rech:0, piezas:0 };
+      modoTotals[r.modo].rech += Number(r.cantidad||0);
+      modosEnEntry.add(r.modo);
+    });
+    modosEnEntry.forEach(m=>{ modoTotals[m].piezas += Number(e.inspeccionadas||0); });
+  });
+  const modoEntries = Object.entries(modoTotals).sort((a,b)=>b[1].rech-a[1].rech).slice(0,8);
+  const ctxModos = document.getElementById('chartModos');
+  if(chartModos){ chartModos.destroy(); chartModos = null; }
+  if(modoEntries.length){
+    const labels = modoEntries.map(x=>x[0]);
+    chartModos = new Chart(ctxModos, {
+      type:'bar',
+      data:{
+        labels,
+        datasets:[
+          {
+            label:'Piezas OK', data: modoEntries.map(x=>x[1].piezas),
+            backgroundColor: labels.map(l=> l===filters.modo ? '#5ecf95' : '#3fd17e'), borderRadius:4
+          },
+          {
+            label:'Rechazos', data: modoEntries.map(x=>x[1].rech),
+            backgroundColor: labels.map(l=> l===filters.modo ? '#ff7a63' : '#f0553f'), borderRadius:4
+          }
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        indexAxis:'y', plugins:{ legend:{ position:'bottom', labels:{ color:'#c7ccd6', font:{size:10.5}, boxWidth:10, padding:8 } } },
+        scales:{
+          x:{ grid:{color:'#2a3341'}, ticks:{color:'#8996a8', font:{size:11}} },
+          y:{ grid:{display:false}, ticks:{color:'#c7ccd6', font:{size:11}} }
+        },
+        onClick:(evt, elements)=>{
+          if(!elements.length) return;
+          const idx = elements[0].index;
+          const modo = labels[idx];
+          filters.modo = (filters.modo === modo) ? '' : modo;
+          applyFiltersAndRender();
+        },
+        onHover:(evt, elements)=>{
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+        }
+      }
+    });
+  }
+  updateModoFilterChip();
+
+  const byTurno = aggregate(f, e=>e.turno);
+  const ctxTurno = document.getElementById('chartTurno');
+  if(chartTurno) chartTurno.destroy();
+  chartTurno = new Chart(ctxTurno, {
+    type:'bar',
+    data:{
+      labels:['Turno 1','Turno 2','Turno 3'],
+      datasets:[
+        { label:'OK', data:[1,2,3].map(t=> (byTurno[t]?byTurno[t].insp:0)), backgroundColor:'#3fd17e', stack:'s', borderRadius:4 },
+        { label:'Rechazadas', data:[1,2,3].map(t=> (byTurno[t]?byTurno[t].rej:0)),
+          backgroundColor:[1,2,3].map(t=> filters.turnos.has(String(t)) ? '#ff7a63' : '#f0553f'), stack:'s', borderRadius:4 }
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ color:'#c7ccd6', font:{size:11} } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true },
+        y:{ grid:{color:'#2a3341'}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true }
+      },
+      onClick:(evt, elements)=>{
+        if(!elements.length) return;
+        const t = String(elements[0].index + 1);
+        if(filters.turnos.has(t)) filters.turnos.delete(t); else filters.turnos.add(t);
+        document.getElementById('chip'+t).classList.toggle('on'+t);
+        applyFiltersAndRender();
+      },
+      onHover:(evt, elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; }
+    }
+  });
+
+  const byLinea = aggregate(f, e=>e.linea || 'Sin línea');
+  const lineaKeys = Object.keys(byLinea).slice(0,10);
+  const ctxLinea = document.getElementById('chartLinea');
+  if(chartLinea){ chartLinea.destroy(); chartLinea = null; }
+  if(lineaKeys.length){
+    chartLinea = new Chart(ctxLinea, {
+      type:'bar',
+      data:{
+        labels: lineaKeys,
+        datasets:[
+          { label:'OK', data: lineaKeys.map(k=>byLinea[k].insp), backgroundColor:'#3fd17e', stack:'s', borderRadius:4 },
+          { label:'Rechazadas', data: lineaKeys.map(k=>byLinea[k].rej),
+            backgroundColor: lineaKeys.map(k=> filters.linea && k.toLowerCase()===filters.linea.toLowerCase() ? '#ff7a63' : '#f0553f'), stack:'s', borderRadius:4 }
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ labels:{ color:'#c7ccd6', font:{size:11} } } },
+        scales:{
+          x:{ grid:{display:false}, ticks:{color:'#8996a8', font:{size:10.5}}, stacked:true },
+          y:{ grid:{color:'#2a3341'}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true }
+        },
+        onClick:(evt, elements)=>{
+          if(!elements.length) return;
+          const linea = lineaKeys[elements[0].index];
+          if(linea === 'Sin línea'){ showToast('Este grupo no tiene línea asignada'); return; }
+          const isActive = filters.linea && filters.linea.toLowerCase() === linea.toLowerCase();
+          filters.linea = isActive ? '' : linea;
+          document.getElementById('fLinea').value = filters.linea;
+          applyFiltersAndRender();
+        },
+        onHover:(evt, elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; }
+      }
+    });
+  }
+
+  const monthly = buildTimeModeChart(f, monthKeyOf, 10);
+  monthly.datasets.forEach(ds=>{ if(filters.modo && ds.label === filters.modo){ ds.borderColor = '#ffffff'; ds.borderWidth = 2; } });
+  const ctxMonthly = document.getElementById('chartMonthly');
+  if(chartMonthly){ chartMonthly.destroy(); chartMonthly = null; }
+  if(monthly.hasData){
+    chartMonthly = new Chart(ctxMonthly, {
+      type:'bar',
+      data:{ labels: monthly.labels, datasets: monthly.datasets },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'bottom', labels:{ color:'#c7ccd6', font:{size:10.5}, boxWidth:10, padding:8 } } },
+        scales:{
+          x:{ grid:{display:false}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true },
+          y:{ grid:{color:'#2a3341'}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true }
+        },
+        onClick:(evt, elements)=>{
+          if(!elements.length) return;
+          const el = elements[0];
+          const periodKey = monthly.periodKeys[el.index];
+          if(!periodKey) return;
+          const range = monthRangeOf(periodKey);
+          const modeLabel = monthly.datasets[el.datasetIndex] && monthly.datasets[el.datasetIndex].label;
+          const modeApplies = modeLabel && modeLabel !== 'Otros';
+          const isSame = filters.desde===range.desde && filters.hasta===range.hasta && (!modeApplies || filters.modo===modeLabel);
+          if(isSame){
+            filters.desde=''; filters.hasta='';
+            if(modeApplies) filters.modo='';
+          } else {
+            filters.desde=range.desde; filters.hasta=range.hasta;
+            if(modeApplies) filters.modo=modeLabel;
+          }
+          document.getElementById('fDesde').value = filters.desde;
+          document.getElementById('fHasta').value = filters.hasta;
+          applyFiltersAndRender();
+        },
+        onHover:(evt, elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; }
+      }
+    });
+  }
+
+  const weekly = buildTimeModeChart(f, isoWeekOf, 10);
+  weekly.datasets.forEach(ds=>{ if(filters.modo && ds.label === filters.modo){ ds.borderColor = '#ffffff'; ds.borderWidth = 2; } });
+  const ctxWeekly = document.getElementById('chartWeekly');
+  if(chartWeekly){ chartWeekly.destroy(); chartWeekly = null; }
+  if(weekly.hasData){
+    chartWeekly = new Chart(ctxWeekly, {
+      type:'bar',
+      data:{ labels: weekly.labels, datasets: weekly.datasets },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'bottom', labels:{ color:'#c7ccd6', font:{size:10.5}, boxWidth:10, padding:8 } } },
+        scales:{
+          x:{ grid:{display:false}, ticks:{color:'#8996a8', font:{size:9.5}, maxRotation:0, autoSkip:true, autoSkipPadding:10}, stacked:true },
+          y:{ grid:{color:'#2a3341'}, ticks:{color:'#8996a8', font:{size:11}}, stacked:true }
+        },
+        onClick:(evt, elements)=>{
+          if(!elements.length) return;
+          const el = elements[0];
+          const periodKey = weekly.periodKeys[el.index];
+          if(!periodKey) return;
+          const range = weekRangeOf(periodKey);
+          const modeLabel = weekly.datasets[el.datasetIndex] && weekly.datasets[el.datasetIndex].label;
+          const modeApplies = modeLabel && modeLabel !== 'Otros';
+          const isSame = filters.desde===range.desde && filters.hasta===range.hasta && (!modeApplies || filters.modo===modeLabel);
+          if(isSame){
+            filters.desde=''; filters.hasta='';
+            if(modeApplies) filters.modo='';
+          } else {
+            filters.desde=range.desde; filters.hasta=range.hasta;
+            if(modeApplies) filters.modo=modeLabel;
+          }
+          document.getElementById('fDesde').value = filters.desde;
+          document.getElementById('fHasta').value = filters.hasta;
+          applyFiltersAndRender();
+        },
+        onHover:(evt, elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; }
+      }
+    });
+  }
+
+  toggleChartEmpty('chartModos', modoEntries.length>0);
+  toggleChartEmpty('chartTurno', f.length>0);
+  toggleChartEmpty('chartLinea', lineaKeys.length>0);
+  toggleChartEmpty('chartMonthly', monthly.hasData);
+  toggleChartEmpty('chartWeekly', weekly.hasData);
+}
+
+function updateModoFilterChip(){
+  const chip = document.getElementById('modoFilterChip');
+  const text = document.getElementById('modoFilterChipText');
+  const parts = [];
+  if(filters.turnos.size) parts.push(`Turno ${[...filters.turnos].sort().join(', ')}`);
+  if(filters.linea) parts.push(`Línea: ${filters.linea}`);
+  if(filters.modo) parts.push(`Modo: ${filters.modo}`);
+  if(filters.desde || filters.hasta) parts.push(`Fecha: ${filters.desde||'…'} a ${filters.hasta||'…'}`);
+  if(parts.length){
+    text.textContent = parts.join(' · ');
+    chip.style.display = 'inline-flex';
+  } else {
+    chip.style.display = 'none';
+  }
+}
+document.getElementById('btnClearModoFilter').addEventListener('click', ()=>{
+  filters.turnos = new Set();
+  filters.linea = '';
+  filters.modo = '';
+  filters.desde = '';
+  filters.hasta = '';
+  [1,2,3].forEach(t=>document.getElementById('chip'+t).classList.remove('on'+t));
+  document.getElementById('fLinea').value = '';
+  document.getElementById('fDesde').value = '';
+  document.getElementById('fHasta').value = '';
+  applyFiltersAndRender();
+});
+
+function renderTable(f){
+  const tbody = document.getElementById('tbody');
+  const sorted = [...f].sort((a,b)=> (b.fecha+b.turno).localeCompare(a.fecha+a.turno));
+  document.getElementById('tableCount').textContent = `${sorted.length} registro${sorted.length===1?'':'s'}`;
+  document.getElementById('emptyState').style.display = sorted.length ? 'none' : 'block';
+
+  tbody.innerHTML = sorted.map(e=>{
+    const hasInsp = Number(e.inspeccionadas) > 0;
+    const ok = Number(e.inspeccionadas||0);
+    const total = ok + Number(e.rechazadas||0);
+    const rate = hasInsp ? (e.rechazadas/total*100) : null;
+    const chips = (e.rechazos||[]).filter(r=>Number(r.cantidad)>0)
+      .map(r=>`<div class="detail-chip">${escapeHtml(r.modo)} <span class="n">${r.cantidad}</span></div>`).join('') || '<span style="color:var(--text-faint);font-size:12px;">Sin desglose capturado</span>';
+    const turnoActive = filters.turnos.has(String(e.turno)) ? ' active' : '';
+    return `
+    <tr data-id="${e.id}" class="main-row">
+      <td class="mono">${e.fecha}</td>
+      <td><span class="badge-turno t${e.turno}${turnoActive}" data-turno="${e.turno}" title="Filtrar por Turno ${e.turno}">Turno ${e.turno}</span></td>
+      <td>${escapeHtml(e.linea)||'—'}</td>
+      <td>${escapeHtml(e.producto)||'—'}</td>
+      <td class="mono">${escapeHtml(e.parte)||'—'}</td>
+      <td>${escapeHtml(e.cliente)||'—'}</td>
+      <td class="mono">${hasInsp ? total : 'N/D'}</td>
+      <td class="num-reject">${e.rechazadas}</td>
+      <td class="num-ok">${hasInsp ? ok : 'N/D'}</td>
+      <td>${hasInsp ? `<div class="rate-cell"><div class="rate-track"><div class="rate-fill" style="width:${Math.min(rate*4,100)}%"></div></div><span class="mono" style="font-size:11px;">${rate.toFixed(1)}%</span></div>` : '<span class="mono" style="font-size:11px;color:var(--text-faint);">N/D</span>'}</td>
+      <td><button class="btn small danger del-btn" data-id="${e.id}">Eliminar</button></td>
+    </tr>
+    <tr class="row-detail" data-detail="${e.id}"><td colspan="11">${chips}<div class="detail-imgs" id="detailImgs-${e.id}"></div></td></tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('.main-row').forEach(row=>{
+    row.addEventListener('click', (ev)=>{
+      if(ev.target.closest('.del-btn')) return;
+      if(ev.target.closest('.badge-turno')) return;
+      const id = row.dataset.id;
+      const detail = tbody.querySelector(`[data-detail="${id}"]`);
+      detail.classList.toggle('open');
+      if(detail.classList.contains('open')) loadDetailImages(id);
+    });
+  });
+  tbody.querySelectorAll('.badge-turno').forEach(badge=>{
+    badge.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const t = badge.dataset.turno;
+      if(filters.turnos.has(t)) filters.turnos.delete(t); else filters.turnos.add(t);
+      document.getElementById('chip'+t).classList.toggle('on'+t);
+      applyFiltersAndRender();
+    });
+  });
+  tbody.querySelectorAll('.del-btn').forEach(btn=>{
+    btn.addEventListener('click', async (ev)=>{
+      ev.stopPropagation();
+      const id = btn.dataset.id;
+      if(!confirm('¿Eliminar este registro de turno? Esta acción no se puede deshacer.')) return;
+      const target = entries.find(e=>e.id === id);
+      try{
+        await db.collection(COL_ENTRIES).doc(id).delete();
+      }catch(e){ console.error(e); showToast('No se pudo eliminar. Intenta de nuevo.'); return; }
+      if(target && target.imagenes){
+        for(const key of IMG_KEYS){
+          if(target.imagenes[key]){
+            try{ await db.collection(COL_IMAGES).doc(`${id}_${key}`).delete(); }catch(e){}
+          }
+        }
+      }
+      showToast('Registro eliminado');
+      // La tabla, KPIs y gráficas se actualizan solas vía la suscripción en tiempo real (onSnapshot)
+    });
+  });
+}
+
+/* ===== Filters wiring ===== */
+document.getElementById('fDesde').addEventListener('change', e=>{ filters.desde = e.target.value; applyFiltersAndRender(); });
+document.getElementById('fHasta').addEventListener('change', e=>{ filters.hasta = e.target.value; applyFiltersAndRender(); });
+['fLinea','fProducto','fParte'].forEach(id=>{
+  const map = {fLinea:'linea', fProducto:'producto', fParte:'parte'};
+  document.getElementById(id).addEventListener('input', e=>{ filters[map[id]] = e.target.value; applyFiltersAndRender(); });
+});
+document.getElementById('fCliente').addEventListener('change', e=>{ filters.cliente = e.target.value; applyFiltersAndRender(); });
+[1,2,3].forEach(t=>{
+  document.getElementById('chip'+t).addEventListener('click', ()=>{
+    const s = String(t);
+    if(filters.turnos.has(s)) filters.turnos.delete(s); else filters.turnos.add(s);
+    document.getElementById('chip'+t).classList.toggle('on'+t);
+    applyFiltersAndRender();
+  });
+});
+document.getElementById('btnClearFilters').addEventListener('click', ()=>{
+  filters = { desde:'', hasta:'', turnos:new Set(), linea:'', producto:'', parte:'', cliente:'', modo:'' };
+  document.getElementById('fDesde').value='';
+  document.getElementById('fHasta').value='';
+  ['fLinea','fProducto','fParte','fCliente'].forEach(id=>document.getElementById(id).value='');
+  [1,2,3].forEach(t=>document.getElementById('chip'+t).classList.remove('on'+t));
+  applyFiltersAndRender();
+});
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  const f = getFiltered();
+  if(!f.length){ showToast('No hay registros para exportar'); return; }
+  const headers = ['fecha','turno','linea','producto','parte','cliente','total_inspeccionado','ok','rechazadas','desglose_modos_falla'];
+  const rows = f.map(e=>{
+    const ok = Number(e.inspeccionadas||0);
+    const total = ok + Number(e.rechazadas||0);
+    const desglose = (e.rechazos||[]).filter(r=>Number(r.cantidad)>0).map(r=>`${r.modo}:${r.cantidad}`).join(' | ');
+    return [e.fecha, e.turno, e.linea, e.producto, e.parte, e.cliente, total, ok, e.rechazadas, desglose]
+      .map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',');
+  });
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `calidad_export_${todayStr()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+});
+
+/* ===== Modal ===== */
+const overlay = document.getElementById('overlay');
+function openModal(){
+  document.getElementById('mFecha').value = todayStr();
+  document.getElementById('mLinea').value = '';
+  document.getElementById('mProducto').value = '';
+  document.getElementById('mParte').value = '';
+  document.getElementById('mCliente').value = '';
+  document.getElementById('mInsp').value = '';
+  document.getElementById('mRech').value = '';
+  modalShift = null;
+  [1,2,3].forEach(t=>document.getElementById('mShift'+t).classList.remove('sel'+t));
+  modalFailRows = [{modo:'', cantidad:''}];
+  document.getElementById('newModeBox').style.display = 'none';
+  renderFailRows();
+  resetImgSlots();
+  overlay.classList.add('open');
+}
+function closeModal(){ overlay.classList.remove('open'); }
+document.getElementById('btnNew').addEventListener('click', openModal);
+document.getElementById('btnCancel').addEventListener('click', closeModal);
+overlay.addEventListener('click', (e)=>{ if(e.target === overlay) closeModal(); });
+bindImgSlots();
+document.getElementById('imgLightbox').addEventListener('click', (e)=>{
+  if(e.target === document.getElementById('imgLightbox')) {
+    document.getElementById('imgLightbox').classList.remove('open');
+  }
+});
+document.getElementById('imgConfirm').addEventListener('click', (e)=>{
+  if(e.target === document.getElementById('imgConfirm')) closePhotoConfirm();
+});
+
+[1,2,3].forEach(t=>{
+  document.getElementById('mShift'+t).addEventListener('click', ()=>{
+    modalShift = t;
+    [1,2,3].forEach(x=>document.getElementById('mShift'+x).classList.remove('sel'+x));
+    document.getElementById('mShift'+t).classList.add('sel'+t);
+  });
+});
+
+function renderFailRows(){
+  const box = document.getElementById('failRows');
+  box.innerHTML = modalFailRows.map((row,i)=>{
+    const opts = modos.map(m=>`<option value="${escapeHtml(m)}" ${m===row.modo?'selected':''}>${escapeHtml(m)}</option>`).join('');
+    return `<div class="fail-row" data-i="${i}">
+      <select class="fr-modo">
+        <option value="">Selecciona modo de falla…</option>
+        ${opts}
+      </select>
+      <input class="fr-cant" type="number" min="0" placeholder="Cant." value="${row.cantidad}">
+      <button class="rm-row" data-i="${i}" title="Quitar">✕</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.fr-modo').forEach((sel,i)=>{
+    sel.addEventListener('change', ()=>{ modalFailRows[i].modo = sel.value; updateSumCheck(); });
+  });
+  box.querySelectorAll('.fr-cant').forEach((inp,i)=>{
+    inp.addEventListener('input', ()=>{ modalFailRows[i].cantidad = inp.value; updateSumCheck(); });
+  });
+  box.querySelectorAll('.rm-row').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      modalFailRows.splice(Number(btn.dataset.i),1);
+      if(!modalFailRows.length) modalFailRows.push({modo:'',cantidad:''});
+      renderFailRows();
+    });
+  });
+  updateSumCheck();
+}
+document.getElementById('btnAddFail').addEventListener('click', ()=>{
+  modalFailRows.push({modo:'', cantidad:''});
+  renderFailRows();
+});
+
+document.getElementById('btnShowNewMode').addEventListener('click', ()=>{
+  const box = document.getElementById('newModeBox');
+  box.style.display = box.style.display === 'none' ? 'flex' : 'none';
+  if(box.style.display === 'flex') document.getElementById('newModeName').focus();
+});
+
+document.getElementById('btnConfirmNewMode').addEventListener('click', async ()=>{
+  const name = document.getElementById('newModeName').value.trim();
+  if(!name) return;
+  if(!modos.includes(name)){
+    modos.push(name);
+    await saveModos();
+  }
+  document.getElementById('newModeName').value='';
+  document.getElementById('newModeBox').style.display='none';
+  renderFailRows();
+  showToast('Modo de falla agregado al catálogo');
+});
+document.getElementById('btnCancelNewMode').addEventListener('click', ()=>{
+  document.getElementById('newModeBox').style.display='none';
+});
+
+function updateSumCheck(){
+  const rech = Number(document.getElementById('mRech').value || 0);
+  const sum = modalFailRows.reduce((a,r)=> a + Number(r.cantidad||0), 0);
+  const el = document.getElementById('sumCheck');
+  if(!rech && !sum){ el.className='sum-check'; el.textContent=''; return; }
+  if(sum === rech){
+    el.className = 'sum-check ok';
+    el.textContent = `✓ El desglose (${sum}) coincide con el total de rechazadas (${rech}).`;
+  } else {
+    el.className = 'sum-check bad';
+    el.textContent = `⚠ El desglose suma ${sum}, pero el total de rechazadas es ${rech}. Revisa los modos de falla.`;
+  }
+}
+document.getElementById('mRech').addEventListener('input', updateSumCheck);
+
+document.getElementById('btnSave').addEventListener('click', async ()=>{
+  const fecha = document.getElementById('mFecha').value;
+  const linea = document.getElementById('mLinea').value.trim();
+  const producto = document.getElementById('mProducto').value.trim();
+  const parte = document.getElementById('mParte').value.trim();
+  const cliente = document.getElementById('mCliente').value.trim();
+  const insp = Number(document.getElementById('mInsp').value || 0);
+  const rech = Number(document.getElementById('mRech').value || 0);
+
+  if(!fecha){ showToast('Captura la fecha del turno'); return; }
+  if(!modalShift){ showToast('Selecciona el turno'); return; }
+  if(!linea){ showToast('Captura la línea de producción'); return; }
+  if(!insp){ showToast('Captura el total de piezas OK inspeccionadas'); return; }
+
+  const rechazos = modalFailRows.filter(r=>r.modo && Number(r.cantidad)>0).map(r=>({modo:r.modo, cantidad:Number(r.cantidad)}));
+
+  const entry = {
+    id: uid(), fecha, turno: modalShift, linea, producto, parte, cliente,
+    inspeccionadas: insp, rechazadas: rech, rechazos,
+    imagenes: {
+      falla: !!modalImages.falla,
+      etiqueta: !!modalImages.etiqueta,
+      etiquetaMaster: !!modalImages.etiquetaMaster
+    }
+  };
+
+  try{
+    await db.collection(COL_ENTRIES).doc(entry.id).set(entry);
+  }catch(e){ console.error(e); showToast('No se pudo guardar. Revisa tu conexión.'); return; }
+
+  for(const key of IMG_KEYS){
+    if(modalImages[key]){
+      try{ await db.collection(COL_IMAGES).doc(`${entry.id}_${key}`).set({ dataUrl: modalImages[key] }); }
+      catch(e){ console.error('No se pudo guardar la foto', key, e); }
+    }
+  }
+
+  closeModal();
+  showToast('Registro guardado');
+  // La tabla, KPIs y gráficas se actualizan solas vía la suscripción en tiempo real (onSnapshot)
+});
+
+document.getElementById('btnSeed').addEventListener('click', seedData);
+document.getElementById('btnImportExcel').addEventListener('click', importExcelData);
+
+async function importExcelData(){
+  let already = false;
+  try{
+    const flagDoc = await DOC_IMPORT.get();
+    already = !!(flagDoc.exists && flagDoc.data().avanzarGtoImported === true);
+  }catch(e){ already = false; }
+
+  if(already){
+    if(!confirm('Estos datos ya se cargaron automáticamente (301 registros de Avanzar GTO). ¿Importar de nuevo y duplicarlos?')) return;
+  }
+
+  const count = await importAvanzarGTOData();
+  showToast(`Se importaron ${count} registros del Excel (Avanzar GTO)`);
+}
+
+async function seedData(){
+  const lineas = ['Línea 1','Línea 2','Línea 3'];
+  const productos = {'Línea 1':'Bracket A','Línea 2':'Cover B','Línea 3':'Housing C'};
+  const partes = {'Línea 1':'PN-10234','Línea 2':'PN-20567','Línea 3':'PN-30891'};
+  const clientes = {'Línea 1':'Cliente Norte','Línea 2':'Cliente Sur','Línea 3':'Cliente Este'};
+  const modosFalla = ['Fuera de tolerancia dimensional','Rayones / cosmético','Golpes / abolladuras','Contaminación','Ensamble incorrecto','Falta de componente'];
+
+  const dias = 5;
+  const seeded = [];
+  for(let d=dias-1; d>=0; d--){
+    const date = new Date(); date.setDate(date.getDate()-d);
+    const fecha = date.toISOString().slice(0,10);
+    for(const linea of lineas){
+      for(let turno=1; turno<=3; turno++){
+        const insp = 180 + Math.floor(Math.random()*90);
+        const rechRate = 0.01 + Math.random()*0.07;
+        let rech = Math.round(insp*rechRate);
+        // distribute rech across 2-3 random failure modes
+        const nModos = 1 + Math.floor(Math.random()*3);
+        const chosen = [...modosFalla].sort(()=>0.5-Math.random()).slice(0, nModos);
+        let remaining = rech;
+        const rechazos = chosen.map((m,i)=>{
+          let cant;
+          if(i === chosen.length-1) cant = remaining;
+          else { cant = Math.floor(Math.random()*(remaining/1.5)); remaining -= cant; }
+          return {modo:m, cantidad: Math.max(0,cant)};
+        }).filter(r=>r.cantidad>0);
+        rech = rechazos.reduce((a,r)=>a+r.cantidad,0);
+
+        seeded.push({
+          id: uid(), fecha, turno, linea,
+          producto: productos[linea], parte: partes[linea], cliente: clientes[linea],
+          inspeccionadas: insp, rechazadas: rech, rechazos
+        });
+      }
+    }
+  }
+  const batch = db.batch();
+  seeded.forEach(e=> batch.set(db.collection(COL_ENTRIES).doc(e.id), e));
+  await batch.commit();
+  showToast(`Se cargaron ${seeded.length} registros de ejemplo`);
+}
+
+// Init
+loadData();
+</script>
+</body>
+</html>
